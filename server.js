@@ -25,6 +25,7 @@ async function initializeDb() {
     CREATE TABLE IF NOT EXISTS prompts (id text PRIMARY KEY, title text NOT NULL, tool text NOT NULL DEFAULT '', channel_id text REFERENCES channels(id) ON DELETE SET NULL, body text NOT NULL, tags text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS assets (id text PRIMARY KEY, title text NOT NULL, url text NOT NULL, channel_id text REFERENCES channels(id) ON DELETE SET NULL, note text NOT NULL DEFAULT '', kind text NOT NULL DEFAULT 'Reference', created_at timestamptz NOT NULL DEFAULT now());
   `);
+  await pool.query("INSERT INTO channels (id,name,description,url,color) VALUES ('common','Common','Ideas and plans shared across both channels.','','mint') ON CONFLICT DO NOTHING");
   await pool.query(`INSERT INTO members (id,name) VALUES ('zeel','Zeel'),('palak','Palak'),('nishita','Nishita') ON CONFLICT DO NOTHING`);
   await pool.query(`INSERT INTO channels (id,name,description,url,color) VALUES ('channel-1','Dreamscapes AI','Stories and visuals from worlds imagined with AI.','', 'lilac'),('channel-2','Little Wonder Lab','Curious, creative experiments made with AI.','', 'peach') ON CONFLICT DO NOTHING`);
   const n = await pool.query('SELECT count(*)::int AS n FROM ideas');
@@ -65,7 +66,7 @@ async function api(req, res, url) {
   if (url.pathname === '/api/config' && req.method === 'GET') return send(res, 200, { passwordEnabled: !!APP_PASSWORD, database: dbReady ? 'connected' : 'not configured' });
   if (url.pathname === '/api/login' && req.method === 'POST') {
     const body = await readBody(req);
-    if (APP_PASSWORD && body.password !== APP_PASSWORD) return send(res, 401, { error: 'That passcode did not match.' });
+    if (!APP_PASSWORD || body.password !== APP_PASSWORD) return send(res, 401, { error: 'That passcode did not match.' });
     return send(res, 200, { ok: true }, { 'Set-Cookie': `studio_session=${sessionToken()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${process.env.NODE_ENV === 'production' ? '; Secure' : ''}` });
   }
   if (url.pathname === '/api/logout' && req.method === 'POST') return send(res, 200, { ok: true }, { 'Set-Cookie': 'studio_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' });
@@ -103,6 +104,9 @@ async function api(req, res, url) {
   if (url.pathname.match(/^\/api\/ideas\/[^/]+$/) && req.method === 'DELETE') {
     await pool.query('DELETE FROM ideas WHERE id=$1', [decodeURIComponent(url.pathname.split('/').pop())]); return send(res, 200, { ok: true });
   }
+  if (url.pathname.match(/^\/api\/ideas\/[^/]+$/) && req.method === 'DELETE') {
+    await pool.query('DELETE FROM ideas WHERE id=$1', [decodeURIComponent(url.pathname.split('/').pop())]); return send(res, 200, { ok: true });
+  }
   if (url.pathname.match(/^\/api\/ideas\/[^/]+\/vote$/) && req.method === 'POST') {
     const ideaId = decodeURIComponent(url.pathname.split('/')[3]), b = await readBody(req);
     if (!['zeel','palak','nishita'].includes(b.memberId) || !['yes','work'].includes(b.vote)) return send(res, 400, { error: 'Choose a team member and a vote.' });
@@ -120,17 +124,51 @@ async function api(req, res, url) {
     const b = await readBody(req); if (!b.name?.trim()) return send(res, 400, { error: 'Add a channel name.' });
     const r = await pool.query('INSERT INTO channels (id,name,description,url,color) VALUES ($1,$2,$3,$4,$5) RETURNING *', [id(),b.name.trim(),b.description||'',b.url||'','lilac']); return send(res, 201, r.rows[0]);
   }
+  if (url.pathname.match(/^\/api\/channels\/[^/]+$/) && req.method === 'PATCH') {
+    const channelId=decodeURIComponent(url.pathname.split('/').pop()),b=await readBody(req);
+    if(channelId==='common')return send(res,400,{error:'The Common channel cannot be edited.'});
+    const r=await pool.query('UPDATE channels SET name=COALESCE($2,name), description=COALESCE($3,description), url=COALESCE($4,url) WHERE id=$1 RETURNING *',[channelId,b.name?.trim()||null,b.description??null,b.url??null]);
+    return r.rowCount?send(res,200,r.rows[0]):send(res,404,{error:'Channel not found.'});
+  }
+  if (url.pathname.match(/^\/api\/channels\/[^/]+$/) && req.method === 'DELETE') {
+    const channelId=decodeURIComponent(url.pathname.split('/').pop());if(channelId==='common')return send(res,400,{error:'The Common channel cannot be deleted.'});
+    await pool.query('DELETE FROM channels WHERE id=$1',[channelId]);return send(res,200,{ok:true});
+  }
   if (url.pathname === '/api/schedule' && req.method === 'POST') {
     const b = await readBody(req); if (!b.title?.trim() || !b.dueDate) return send(res, 400, { error: 'Add a task title and date.' });
     const r = await pool.query('INSERT INTO schedule (id,title,channel_id,member_id,due_date,kind) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [id(),b.title.trim(),b.channelId||null,b.memberId||null,b.dueDate,b.kind||'Team turn']); return send(res, 201, r.rows[0]);
+  }
+  if (url.pathname.match(/^\/api\/schedule\/[^/]+$/) && req.method === 'PATCH') {
+    const itemId=decodeURIComponent(url.pathname.split('/').pop()),b=await readBody(req);
+    const r=await pool.query('UPDATE schedule SET title=COALESCE($2,title),channel_id=$3,member_id=$4,due_date=COALESCE($5,due_date),kind=COALESCE($6,kind) WHERE id=$1 RETURNING *',[itemId,b.title?.trim()||null,b.channelId||null,b.memberId||null,b.dueDate||null,b.kind||null]);
+    return r.rowCount?send(res,200,r.rows[0]):send(res,404,{error:'Calendar item not found.'});
+  }
+  if (url.pathname.match(/^\/api\/schedule\/[^/]+$/) && req.method === 'DELETE') {
+    await pool.query('DELETE FROM schedule WHERE id=$1',[decodeURIComponent(url.pathname.split('/').pop())]);return send(res,200,{ok:true});
   }
   if (url.pathname === '/api/prompts' && req.method === 'POST') {
     const b = await readBody(req); if (!b.title?.trim() || !b.text?.trim()) return send(res, 400, { error: 'Add a prompt name and prompt text.' });
     const r = await pool.query('INSERT INTO prompts (id,title,tool,channel_id,body,tags) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [id(),b.title.trim(),b.tool||'',b.channelId||null,b.text.trim(),(b.tags||[]).join(',')]); return send(res, 201, r.rows[0]);
   }
+  if (url.pathname.match(/^\/api\/prompts\/[^/]+$/) && req.method === 'PATCH') {
+    const promptId=decodeURIComponent(url.pathname.split('/').pop()),b=await readBody(req);
+    const r=await pool.query('UPDATE prompts SET title=COALESCE($2,title),tool=COALESCE($3,tool),channel_id=$4,body=COALESCE($5,body),tags=COALESCE($6,tags) WHERE id=$1 RETURNING *',[promptId,b.title?.trim()||null,b.tool??null,b.channelId||null,b.text?.trim()||null,Array.isArray(b.tags)?b.tags.join(','):null]);
+    return r.rowCount?send(res,200,r.rows[0]):send(res,404,{error:'Prompt not found.'});
+  }
+  if (url.pathname.match(/^\/api\/prompts\/[^/]+$/) && req.method === 'DELETE') {
+    await pool.query('DELETE FROM prompts WHERE id=$1',[decodeURIComponent(url.pathname.split('/').pop())]);return send(res,200,{ok:true});
+  }
   if (url.pathname === '/api/assets' && req.method === 'POST') {
     const b = await readBody(req); if (!b.title?.trim() || !b.url?.trim()) return send(res, 400, { error: 'Add a title and preview URL.' });
     const r = await pool.query('INSERT INTO assets (id,title,url,channel_id,note,kind) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *', [id(),b.title.trim(),b.url.trim(),b.channelId||null,b.note||'',b.kind||'Reference']); return send(res, 201, r.rows[0]);
+  }
+  if (url.pathname.match(/^\/api\/assets\/[^/]+$/) && req.method === 'PATCH') {
+    const assetId=decodeURIComponent(url.pathname.split('/').pop()),b=await readBody(req);
+    const r=await pool.query('UPDATE assets SET title=COALESCE($2,title),url=COALESCE($3,url),channel_id=$4,note=COALESCE($5,note),kind=COALESCE($6,kind) WHERE id=$1 RETURNING *',[assetId,b.title?.trim()||null,b.url?.trim()||null,b.channelId||null,b.note??null,b.kind||null]);
+    return r.rowCount?send(res,200,r.rows[0]):send(res,404,{error:'Review link not found.'});
+  }
+  if (url.pathname.match(/^\/api\/assets\/[^/]+$/) && req.method === 'DELETE') {
+    await pool.query('DELETE FROM assets WHERE id=$1',[decodeURIComponent(url.pathname.split('/').pop())]);return send(res,200,{ok:true});
   }
   if (url.pathname === '/api/turn' && req.method === 'POST') {
     const b = await readBody(req); if (!['zeel','palak','nishita'].includes(b.memberId)) return send(res, 400, { error: 'Choose a team member.' });
