@@ -2,7 +2,7 @@
 
 A small shared workspace for Zeel, Palak and Nishita. One Node.js service serves the website and API; PostgreSQL keeps ideas, comments, votes, channels and calendar items shared. There is no frontend build system, separate frontend container, or media upload service.
 
-## What is included
+## What is included  
 
 - Dreamy public landing page with a pastel evil-eye illustration, drifting color, starlight, and gentle cursor sparkles
 - Passcode screen before the private creator workspace
