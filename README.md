@@ -60,6 +60,12 @@ The app is one service and Postgres is a second service in the same Railway proj
 6. In the app service, open **Settings → Networking → Generate Domain**. The generated URL opens the public landing page. Press **Enter our studio**, then enter the passcode.
 7. In the Postgres service, open **Backups** and choose a backup schedule that fits your needs. Railway’s Postgres service persists data on its volume, but you should still make and verify backups.
 
+### If logs show `ECONNREFUSED` or `ETIMEDOUT`
+
+- Check that the Postgres service is deployed and shows **Online** in the same Railway project and environment as the app.
+- In the app service’s **Variables**, set `DATABASE_URL` to a Railway reference to the Postgres service’s internal `DATABASE_URL`, using that service’s exact name: `${{Postgres.DATABASE_URL}}`. Do not use the app’s own `DATABASE_URL`, a stale copied value, or the public URL for service-to-service connections.
+- After changing the reference, redeploy the app. The app now retries database initialization with backoff while Postgres starts. If the connection still refuses after retries, check the Postgres deployment logs and service health; retries cannot fix a stopped database or a reference to the wrong environment.
+
 Railway’s Free plan currently includes **$1 of resource credit per month**, within the Free plan’s service limits. It is not possible to promise that a continuously running Node app plus PostgreSQL will stay under $1: Railway bills for actual RAM, CPU, egress and volume storage, and the combined usage of both services can use up the credit. Check **Usage** in Railway before and after deploying. The free trial currently starts with a one-time $5 credit for up to 30 days; after it expires, the Free plan’s $1 monthly credit applies. See [Railway plans](https://docs.railway.com/pricing/plans) and [the Free Trial](https://docs.railway.com/pricing/free-trial) for current details.
 
 ## Data and privacy notes

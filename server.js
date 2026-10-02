@@ -13,8 +13,10 @@ let dbReady = false;
 
 async function initializeDb() {
   if (!DB_URL) return;
-  const { Pool } = require('pg');
-  pool = new Pool({ connectionString: DB_URL, ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined, max: 3, idleTimeoutMillis: 10000 });
+  if (!pool) {
+    const { Pool } = require('pg');
+    pool = new Pool({ connectionString: DB_URL, ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : undefined, max: 3, idleTimeoutMillis: 10000, connectionTimeoutMillis: 5000 });
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS members (id text PRIMARY KEY, name text NOT NULL);
     CREATE TABLE IF NOT EXISTS channels (id text PRIMARY KEY, name text NOT NULL, description text NOT NULL DEFAULT '', url text NOT NULL DEFAULT '', color text NOT NULL DEFAULT 'lavender');
@@ -195,5 +197,20 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end('Not found');
 });
 
-initializeDb().then(() => console.log(DB_URL ? 'Postgres connected and ready' : 'No DATABASE_URL; set it to enable shared storage')).catch(err => { console.error('Database initialization failed:', err); process.exitCode = 1; });
+async function keepDatabaseReady() {
+  let delay = 2000;
+  while (!dbReady && DB_URL) {
+    try {
+      await initializeDb();
+      dbReady = true;
+      console.log('Postgres connected and ready');
+    } catch (err) {
+      console.error(`Postgres unavailable; retrying in ${Math.round(delay / 1000)}s:`, err.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 30000);
+    }
+  }
+  if (!DB_URL) console.log('No DATABASE_URL; set it to enable shared storage');
+}
+keepDatabaseReady();
 server.listen(PORT, '0.0.0.0', () => console.log(`Creator studio listening on ${PORT}`));
