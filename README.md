@@ -1,4 +1,4 @@
-# Softframe — Creator Studio
+# A Dream in Frames — Creator Studio
 
 A small shared workspace for Zeel, Palak and Nishita. One Node.js service serves the website and API; PostgreSQL keeps ideas, comments, votes, channels and calendar items shared. There is no frontend build system, separate frontend container, or media upload service.
 
