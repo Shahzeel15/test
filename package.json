@@ -1,9 +1,12 @@
 {
-  "name": "zeel-shah-hello",
+  "name": "softframe-creator-studio",
   "version": "1.0.0",
   "private": true,
-  "description": "A tiny personal hello page for Zeel Shah",
+  "description": "A lightweight shared creator studio for Zeel, Palak, and Nishita",
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
   }
 }
