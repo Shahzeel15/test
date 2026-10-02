@@ -28,7 +28,16 @@ Requirements: Node.js 20 or newer and PostgreSQL 14 or newer.
    CREATE DATABASE softframe;
    ```
 
-2. Copy `.env.example` to `.env`, then set `DATABASE_URL` to your local PostgreSQL connection string. Set `APP_PASSWORD` and `SESSION_SECRET` to private values. Leave `PGSSL=false` for local PostgreSQL.
+2. In PowerShell, from the project folder `C:\Learn`, copy `.env.example` to `.env`:
+
+   ```powershell
+   Set-Location C:\Learn
+   Copy-Item .env.example .env
+   ```
+
+   Open `C:\Learn\.env` and set `DATABASE_URL` to your local PostgreSQL connection string. Set `APP_PASSWORD` and `SESSION_SECRET` to private values. Leave `PGSSL=false` for local PostgreSQL.
+
+   To use the storyboard assistant locally, create a Groq API key at [console.groq.com/keys](https://console.groq.com/keys) and put it in `.env` as `GROQ_API_KEY=...`. Keep this key private; the browser never receives it. `GROQ_MODEL` is optional and defaults to `openai/gpt-oss-20b`.
 
 3. Install and start the app:
 
@@ -39,7 +48,9 @@ Requirements: Node.js 20 or newer and PostgreSQL 14 or newer.
 
 4. Open [http://localhost:3000](http://localhost:3000). The public dream landing page appears first; press **Enter our studio** and use your passcode. The app creates its tables and starter channels, ideas, prompts and schedule the first time it connects.
 
-If `APP_PASSWORD` is blank, the local app opens without a passcode. Do not leave it blank on a public deployment.
+5. After logging in, use the floating sparkle button at the bottom right. **Set our style** turns your camera, reference-frame and voiceover preferences into a reusable guide saved in PostgreSQL for the whole team. **Build a storyboard** sends a story/script to Groq and applies that guide to produce a scene-by-scene shotlist with generation prompts and estimated narration timing. If Groq returns a rate limit (`429`), the panel shows a short try-again message and the rest of the app stays available.
+
+Use the `APP_PASSWORD` you set in `.env` on the login screen. The app requires a configured passcode before it issues a studio session.
 
 ## Deploy on Railway
 
@@ -53,6 +64,7 @@ The app is one service and Postgres is a second service in the same Railway proj
    - `DATABASE_URL` = reference the Postgres service’s `DATABASE_URL` variable, e.g. `${{Postgres.DATABASE_URL}}` (use the exact Postgres service name shown in your project).
    - `APP_PASSWORD` = a private passcode you share with your three collaborators.
    - `SESSION_SECRET` = a long random secret (for example, generate one locally with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`).
+   - `GROQ_API_KEY` = your Groq API key (required only if you want the storyboard assistant on Railway).
 
    Railway provides `PORT`; the app listens on it automatically. Railway’s internal Postgres URL is the preferred connection for services in the same project, so `PGSSL` is not needed.
 
@@ -75,6 +87,7 @@ Railway’s Free plan currently includes **$1 of resource credit per month**, wi
 - The landing page is public; the studio data API requires the configured `APP_PASSWORD` session. Set a non-empty passcode before deploying publicly.
 - The `Common` channel is a built-in shared bucket and cannot be edited or deleted. It appears in channel filters and every channel selector.
 - Ideas, votes, comments, schedule items, saved prompts and review links are in PostgreSQL.
+- The storyboard assistant sends only the text and production directions entered in its panel to Groq. The API key stays on the server. The reusable director's guide is stored in PostgreSQL and shared with the team. The preference form fields are remembered in the current browser for convenient editing.
 - File uploads, video storage, Drive OAuth and YouTube integration are intentionally not implemented yet. For now, the review locker accepts a link only in the UI; Google Drive setup can be planned separately.
 
 ## Common commands

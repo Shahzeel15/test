@@ -3,10 +3,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
+// Load the local .env without a runtime dependency. Deployment variables still take precedence.
+try {
+  const envFile = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+  for (const line of envFile.split(/\r?\n/)) {
+    const entry = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!entry || process.env[entry[1]] !== undefined) continue;
+    const value = entry[2].replace(/^(['"])(.*)\1$/, '$2');
+    process.env[entry[1]] = value;
+  }
+} catch (err) {
+  if (err.code !== 'ENOENT') console.warn('Could not read .env:', err.message);
+}
+
 const PORT = Number(process.env.PORT) || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'local-only-change-me';
 const APP_PASSWORD = process.env.APP_PASSWORD || '';
 const DB_URL = process.env.DATABASE_URL;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
 const page = fs.readFileSync(path.join(__dirname, 'index.html'));
 let pool;
 let dbReady = false;
@@ -26,6 +41,7 @@ async function initializeDb() {
     CREATE TABLE IF NOT EXISTS schedule (id text PRIMARY KEY, title text NOT NULL, channel_id text REFERENCES channels(id) ON DELETE SET NULL, member_id text REFERENCES members(id) ON DELETE SET NULL, due_date date NOT NULL, kind text NOT NULL DEFAULT 'Publishing');
     CREATE TABLE IF NOT EXISTS prompts (id text PRIMARY KEY, title text NOT NULL, tool text NOT NULL DEFAULT '', channel_id text REFERENCES channels(id) ON DELETE SET NULL, body text NOT NULL, tags text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS assets (id text PRIMARY KEY, title text NOT NULL, url text NOT NULL, channel_id text REFERENCES channels(id) ON DELETE SET NULL, note text NOT NULL DEFAULT '', kind text NOT NULL DEFAULT 'Reference', created_at timestamptz NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS studio_settings (key text PRIMARY KEY, value text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
   `);
   await pool.query("INSERT INTO channels (id,name,description,url,color) VALUES ('common','Common','Ideas and plans shared across both channels.','','mint') ON CONFLICT DO NOTHING");
   await pool.query(`INSERT INTO members (id,name) VALUES ('zeel','Zeel'),('palak','Palak'),('nishita','Nishita') ON CONFLICT DO NOTHING`);
@@ -83,6 +99,51 @@ async function api(req, res, url) {
   }
   if (url.pathname === '/api/logout' && req.method === 'POST') return send(res, 200, { ok: true }, { 'Set-Cookie': 'studio_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' });
   if (url.pathname.startsWith('/api/') && !isAuthed(req)) return send(res, 401, { error: 'Please unlock the studio first.' });
+  if (url.pathname === '/api/storyboard' && req.method === 'POST') {
+    if (!GROQ_API_KEY) return send(res, 503, { error: 'The storyboard assistant is not set up yet. Add GROQ_API_KEY to your local .env file.' });
+    const body = await readBody(req);
+    if (!['direction','storyboard'].includes(body.mode)) return send(res, 400, { error: 'Choose a storyboard assistant mode.' });
+    const text = String(body.text || '').trim();
+    if (!text) return send(res, 400, { error: body.mode === 'direction' ? 'Add your visual and timing preferences first.' : 'Add a story or script first.' });
+    if (text.length > 12000) return send(res, 413, { error: 'That is a lot for one pass. Please shorten it to 12,000 characters or less.' });
+
+    const styleMode = body.mode === 'direction';
+    if (!dbReady) return send(res, 503, { error: 'The studio database is still starting. Please try again in a moment.' });
+    const savedGuideResult = styleMode ? null : await pool.query("SELECT value FROM studio_settings WHERE key='storyboard_director_guide'");
+    const direction = String(styleMode ? '' : savedGuideResult.rows[0]?.value || '').slice(0, 6000);
+    const system = styleMode
+      ? `You are the production-style assistant for A Dream in Frames, a tiny AI storytelling studio run by Zeel, Palak and Nishita. Turn the team's preferences into a reusable, concise director's guide that can be pasted into future storyboard requests. Keep their choices; fill gaps with tasteful, practical defaults. Cover camera language and lenses, lighting, palette, character/reference-frame continuity, voiceover pacing and estimated timing assumptions. Make the result specific and internally consistent. Do not invent story content. Return a clean, skimmable guide with headings and actionable rules. Do not mention that you are an AI.`
+      : `You are the script-to-storyboard and shotlist director for A Dream in Frames, a small AI video studio. Convert the user's story or rough script into a complete, production-ready scene plan for tools such as Runway, Kling and Midjourney. Preserve the story's intent and events; do not add plot twists or change character identities. First provide a concise creative bible with the overall visual premise, fixed color palette, character reference-frame descriptions, and continuity rules. Then break the story into numbered scenes, keeping each scene focused on one visual beat. For every scene include: story action; shot size and camera angle; lens focal length and why; camera movement; lighting; composition and color; a reference-frame prompt that locks character appearance and palette; a ready-to-use generation prompt with subject, action, environment, style, camera and motion; voiceover line or exact script excerpt; estimated voiceover duration in seconds. Estimate spoken duration from word count at the user's requested pace (or 140 words per minute by default), show the word count and formula briefly, and leave small pauses between scenes. Finish with a continuity checklist and a suggested total runtime. Be concrete and visual, avoid contradictory camera directions, and don't claim exact durations. Format the result in clean Markdown. Do not mention that you are an AI.${direction ? `\n\nTEAM'S REUSABLE DIRECTOR'S GUIDE (follow this for this storyboard):\n${direction}` : ''}`;
+    const userContent = styleMode ? text : `STORY OR SCRIPT:\n${text}${body.voiceoverWpm ? `\n\nRequested voiceover pace: ${Math.min(220, Math.max(80, Number(body.voiceoverWpm) || 140))} words per minute.` : ''}`;
+    try {
+      const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: GROQ_MODEL, messages: [{ role: 'system', content: system }, { role: 'user', content: userContent }], temperature: 0.7, max_tokens: styleMode ? 1200 : 5000 }),
+        signal: AbortSignal.timeout(60000)
+      });
+      if (upstream.status === 429) {
+        const retry = upstream.headers.get('retry-after');
+        return send(res, 429, { error: `Oops, Groq's request limit has been reached. Please try again${retry ? ` in about ${retry} seconds` : ' in a little while'}.` });
+      }
+      if (upstream.status === 401 || upstream.status === 403) {
+        console.error('Groq rejected the API key or account permissions.');
+        return send(res, 502, { error: 'The storyboard assistant could not connect to Groq. Check GROQ_API_KEY in your local .env.' });
+      }
+      if (!upstream.ok) {
+        console.error('Groq completion failed with status', upstream.status);
+        return send(res, 502, { error: 'Oops, the storyboard assistant is having a little trouble. Please try again soon.' });
+      }
+      const result = await upstream.json();
+      const answer = result.choices?.[0]?.message?.content;
+      if (typeof answer !== 'string' || !answer.trim()) return send(res, 502, { error: 'The assistant returned an empty reply. Please try again.' });
+      if (styleMode) await pool.query("INSERT INTO studio_settings (key,value) VALUES ('storyboard_director_guide',$1) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()", [answer.trim()]);
+      return send(res, 200, { answer: answer.trim(), model: result.model || GROQ_MODEL });
+    } catch (err) {
+      console.error('Storyboard assistant request failed:', err.name, err.message);
+      return send(res, 502, { error: err.name === 'TimeoutError' ? 'That took too long. Please try again with a shorter script.' : 'Oops, the storyboard assistant is unavailable right now. Please try again soon.' });
+    }
+  }
   if (!dbReady) return send(res, 503, { error: 'Database is not connected. Set DATABASE_URL and restart the app.' });
 
   if (url.pathname === '/api/data' && req.method === 'GET') {
