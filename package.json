@@ -1,0 +1,9 @@
+{
+  "name": "zeel-shah-hello",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny personal hello page for Zeel Shah",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
