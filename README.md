@@ -37,7 +37,7 @@ Requirements: Node.js 20 or newer and PostgreSQL 14 or newer.
    npm start
    ```
 
-4. Open [http://localhost:3000](http://localhost:3000). The public dream landing page appears first; press **Enter our studio** and use your passcode. The app creates its tables and initial demo channels, ideas and schedule the first time it connects.
+4. Open [http://localhost:3000](http://localhost:3000). The public dream landing page appears first; press **Enter our studio** and use your passcode. The app creates its tables and starter channels, ideas, prompts and schedule the first time it connects.
 
 If `APP_PASSWORD` is blank, the local app opens without a passcode. Do not leave it blank on a public deployment.
 

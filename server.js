@@ -28,6 +28,16 @@ async function initializeDb() {
   await pool.query("INSERT INTO channels (id,name,description,url,color) VALUES ('common','Common','Ideas and plans shared across both channels.','','mint') ON CONFLICT DO NOTHING");
   await pool.query(`INSERT INTO members (id,name) VALUES ('zeel','Zeel'),('palak','Palak'),('nishita','Nishita') ON CONFLICT DO NOTHING`);
   await pool.query(`INSERT INTO channels (id,name,description,url,color) VALUES ('channel-1','Dreamscapes AI','Stories and visuals from worlds imagined with AI.','', 'lilac'),('channel-2','Little Wonder Lab','Curious, creative experiments made with AI.','', 'peach') ON CONFLICT DO NOTHING`);
+  await pool.query(`
+    INSERT INTO prompts (id,title,tool,channel_id,body,tags)
+    SELECT seed.id,seed.title,seed.tool,seed.channel_id,seed.body,seed.tags FROM (VALUES
+      ('prompt-watercolor','Soft watercolor dream world','Midjourney · Image','channel-1','Pastel watercolor illustration on textured handmade paper, a quiet dream world with tiny glowing lanterns and floating flowers, soft diffused light, whimsical yet cinematic, delicate detail, gentle lavender and peach palette.','watercolor,pastel,worldbuilding'),
+      ('prompt-tiny-planet','A tiny planet, close-up','Kling · Video','channel-2','A palm-sized planet turns slowly in the hands, miniature clouds drift around it, sunlight glows at the edge, tactile clay-like surface, macro lens, dreamy motion, soft warm shadows.','macro,motion,experiment'),
+      ('prompt-narrator','Warm narrator voice','ElevenLabs · Voice','common','Warm, curious, gentle storytelling. Smile in the voice. Unhurried pace, soft pauses after each image, intimate and wonder-filled; never overly dramatic.','voice,narration,style')
+    ) AS seed(id,title,tool,channel_id,body,tags)
+    WHERE NOT EXISTS (SELECT 1 FROM prompts existing WHERE lower(existing.title)=lower(seed.title))
+    ON CONFLICT (id) DO NOTHING
+  `);
   const n = await pool.query('SELECT count(*)::int AS n FROM ideas');
   if (!n.rows[0].n) {
     await pool.query(`INSERT INTO ideas (id,title,channel_id,status,kind,notes,assignee,due_date) VALUES
@@ -149,8 +159,9 @@ async function api(req, res, url) {
   }
   if (url.pathname.match(/^\/api\/prompts\/[^/]+$/) && req.method === 'PATCH') {
     const promptId=decodeURIComponent(url.pathname.split('/').pop()),b=await readBody(req);
-    const r=await pool.query('UPDATE prompts SET title=COALESCE($2,title),tool=COALESCE($3,tool),channel_id=$4,body=COALESCE($5,body),tags=COALESCE($6,tags) WHERE id=$1 RETURNING *',[promptId,b.title?.trim()||null,b.tool??null,b.channelId||null,b.text?.trim()||null,Array.isArray(b.tags)?b.tags.join(','):null]);
-    return r.rowCount?send(res,200,r.rows[0]):send(res,404,{error:'Prompt not found.'});
+    if(!b.title?.trim()||!b.text?.trim())return send(res,400,{error:'Add a prompt name and prompt text.'});
+    const r=await pool.query('INSERT INTO prompts (id,title,tool,channel_id,body,tags) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title,tool=EXCLUDED.tool,channel_id=EXCLUDED.channel_id,body=EXCLUDED.body,tags=EXCLUDED.tags RETURNING *',[promptId,b.title.trim(),b.tool||'',b.channelId||null,b.text.trim(),Array.isArray(b.tags)?b.tags.join(','):b.tags||'']);
+    return send(res,200,r.rows[0]);
   }
   if (url.pathname.match(/^\/api\/prompts\/[^/]+$/) && req.method === 'DELETE') {
     await pool.query('DELETE FROM prompts WHERE id=$1',[decodeURIComponent(url.pathname.split('/').pop())]);return send(res,200,{ok:true});
