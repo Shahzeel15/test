@@ -104,9 +104,6 @@ async function api(req, res, url) {
   if (url.pathname.match(/^\/api\/ideas\/[^/]+$/) && req.method === 'DELETE') {
     await pool.query('DELETE FROM ideas WHERE id=$1', [decodeURIComponent(url.pathname.split('/').pop())]); return send(res, 200, { ok: true });
   }
-  if (url.pathname.match(/^\/api\/ideas\/[^/]+$/) && req.method === 'DELETE') {
-    await pool.query('DELETE FROM ideas WHERE id=$1', [decodeURIComponent(url.pathname.split('/').pop())]); return send(res, 200, { ok: true });
-  }
   if (url.pathname.match(/^\/api\/ideas\/[^/]+\/vote$/) && req.method === 'POST') {
     const ideaId = decodeURIComponent(url.pathname.split('/')[3]), b = await readBody(req);
     if (!['zeel','palak','nishita'].includes(b.memberId) || !['yes','work'].includes(b.vote)) return send(res, 400, { error: 'Choose a team member and a vote.' });
